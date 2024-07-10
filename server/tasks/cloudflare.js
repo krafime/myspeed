@@ -64,11 +64,10 @@ function quartile(values, percentile) {
 }
 
 function jitter(values) {
-    // Average distance between consecutive latency measurements...
     let jitters = [];
 
     for (let i = 0; i < values.length - 1; i += 1) {
-        jitters.push(Math.abs(values[i] - values[i+1]));
+        jitters.push(Math.abs(values[i] - values[i + 1]));
     }
 
     return average(jitters);
@@ -120,9 +119,66 @@ function request(localAddress, options, data = "") {
     });
 }
 
-function download(ip, bytes) {
+async function getClosestServer(ip) {
     const options = {
         hostname: "speed.cloudflare.com",
+        path: "/__servers",
+        method: "GET",
+    };
+
+    return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+            let data = "";
+
+            res.on("data", (chunk) => {
+                data += chunk;
+            });
+
+            res.on("end", () => {
+                const servers = JSON.parse(data);
+                let closestServer = servers[0];
+                let minPing = Infinity;
+
+                servers.forEach((server) => {
+                    const ping = measureLatency(server.ip);
+                    if (ping < minPing) {
+                        minPing = ping;
+                        closestServer = server;
+                    }
+                });
+
+                resolve(closestServer);
+            });
+        });
+
+        req.on("error", (error) => {
+            reject(error.message);
+        });
+
+        req.end();
+    });
+}
+
+async function measureLatency(ip) {
+    const measurements = [];
+
+    for (let i = 0; i < 20; i += 1) {
+        await download(ip, 1000).then(
+            (response) => {
+                measurements.push(response[4] - response[0] - response[6]);
+            },
+            (error) => {
+                console.log(`Error while pinging: ${error}`);
+            },
+        );
+    }
+
+    return average(measurements);
+}
+
+function download(ip, bytes) {
+    const options = {
+        hostname: ip,
         path: `/__down?bytes=${bytes}`,
         method: "GET",
     };
@@ -133,7 +189,7 @@ function download(ip, bytes) {
 function upload(ip, bytes) {
     const data = "0".repeat(bytes);
     const options = {
-        hostname: "speed.cloudflare.com",
+        hostname: ip,
         path: "/__up",
         method: "POST",
         headers: {
@@ -146,24 +202,6 @@ function upload(ip, bytes) {
 
 function measureSpeed(bytes, duration) {
     return (bytes * 8) / (duration / 1000) / 1e6;
-}
-
-async function measureLatency(ip) {
-    const measurements = [];
-
-    for (let i = 0; i < 20; i += 1) {
-        await download(ip, 1000).then(
-            (response) => {
-                // TTFB - Server processing time
-                measurements.push(response[4] - response[0] - response[6]);
-            },
-            (error) => {
-                console.log(`Error while pinging: ${error}`);
-            },
-        );
-    }
-
-    return [Math.min(...measurements), Math.max(...measurements), average(measurements), median(measurements), jitter(measurements)];
 }
 
 async function measureDownload(ip, bytes, iterations) {
@@ -211,23 +249,28 @@ module.exports = async function speedTest() {
             throw new Error("Invalid interface");
         }
 
-        result["ping"] = Math.round((await measureLatency(interfaceIp))[3]);
+        const closestServer = await getClosestServer(interfaceIp);
+        if (!closestServer) {
+            throw new Error("Unable to find closest server");
+        }
 
-        const testDown1 = await measureDownload(interfaceIp, 101000, 1);
-        const testDown2 = await measureDownload(interfaceIp, 1001000, 8);
-        const testDown3 = await measureDownload(interfaceIp, 10001000, 6);
-        const testDown4 = await measureDownload(interfaceIp, 25001000, 4);
-        const testDown5 = await measureDownload(interfaceIp, 100001000, 1);
+        result["ping"] = Math.round(await measureLatency(closestServer.ip));
+
+        const testDown1 = await measureDownload(closestServer.ip, 101000, 1);
+        const testDown2 = await measureDownload(closestServer.ip, 1001000, 8);
+        const testDown3 = await measureDownload(closestServer.ip, 10001000, 6);
+        const testDown4 = await measureDownload(closestServer.ip, 25001000, 4);
+        const testDown5 = await measureDownload(closestServer.ip, 100001000, 1);
 
         result["download"] = quartile([...testDown1, ...testDown2, ...testDown3, ...testDown4, ...testDown5], 0.9).toFixed(2);
 
-        const testUp1 = await measureUpload(interfaceIp, 11000, 10);
-        const testUp2 = await measureUpload(interfaceIp, 101000, 10);
-        const testUp3 = await measureUpload(interfaceIp, 1001000, 8);
+        const testUp1 = await measureUpload(closestServer.ip, 11000, 10);
+        const testUp2 = await measureUpload(closestServer.ip, 101000, 10);
+        const testUp3 = await measureUpload(closestServer.ip, 1001000, 8);
         result["upload"] = quartile([...testUp1, ...testUp2, ...testUp3], 0.9).toFixed(2);
     } catch (error) {
         console.error("Error while using cloudflare speedtest: " + error.message);
-        result = {error: error.message};
+        result = { error: error.message };
     }
 
     return result;
