@@ -15,7 +15,7 @@ const postWebhook = async (token, chatId, message, triggerActivity) => {
 }
 
 function formatDate(date) {
-    // Format the date as needed, e.g., "YYYY-MM-DD HH:mm:ss"
+    // Format the date as needed, e.g., "DD-MM-YYYY HH:mm:ss"
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
@@ -29,15 +29,19 @@ const currentDate = formatDate(new Date());
 
 module.exports = (registerEvent) => {
     registerEvent('testFinished', async (integration, data, activity) => {
-        if (integration.data.send_finished)
+        if (integration.data.send_finished) {
+            data.currentDate = currentDate;  // Add currentDate to data object
             await postWebhook(integration.data.token, integration.data.chat_id,
                 replaceVariables(integration.data.finished_message || defaults.finished, data), activity)
+        }
     });
 
     registerEvent('testFailed', async (integration, error, activity) => {
-        if (integration.data.send_failed)
+        if (integration.data.send_failed) {
+            const errorData = { error, currentDate };  // Add currentDate to error object
             await postWebhook(integration.data.token, integration.data.chat_id,
-                replaceVariables(integration.data.failed_message || defaults.failed, {error}), activity)
+                replaceVariables(integration.data.failed_message || defaults.failed, errorData), activity)
+        }
     });
 
     return {
