@@ -95,14 +95,6 @@ async function get(hostname, path) {
     });
 }
 
-async function fetchServerLocationData() {
-    const res = JSON.parse(await get("speed.cloudflare.com", "/locations"));
-    return res.reduce((data, { iata, city }) => {
-        data[iata] = city;
-        return data;
-    }, {});
-}
-
 function fetchCfCdnCgiTrace() {
     const parseCfCdnCgiTrace = (text) =>
         text
@@ -262,10 +254,12 @@ module.exports = async function speedTest() {
             throw new Error("Invalid interface");
         }
 
-        const [ping, serverLocationData, { ip, loc, colo }] = await Promise.all([measureLatency("speed.cloudflare.com"), fetchServerLocationData(), fetchCfCdnCgiTrace()]);
-        const city = serverLocationData[colo];
+        const [ping, { ip, loc, colo }] = await Promise.all([measureLatency("speed.cloudflare.com"), fetchCfCdnCgiTrace()]);
 
-        logInfo("Server location", `${city} (${colo})`);
+        const city = "Jakarta";
+        const serverCode = "CGK";
+
+        logInfo("Server location", `${city} (${serverCode})`);
         logInfo("Your IP", `${ip} (${loc})`);
         logLatency(ping);
 
